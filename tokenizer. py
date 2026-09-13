@@ -1,0 +1,185 @@
+import re
+from dataclasses import dataclass,fields
+
+
+#____changelog_____
+#   11/9/2026
+#           created tokenizer using redmi note 10
+#   12/9/2026
+#           added skip token feature 
+#           added all keywords of javascript 1.1
+#           added many patterns
+
+            
+__author__ =  "its_me_abi"
+__date__   =  "11/9/2026"
+
+
+"""
+   this is a general programing language tokenizer.
+   initialy created for splitting tokens of javascript langugae
+   it is customizable so it is possible to use it for any langugae
+   
+"""
+
+@dataclass
+class patterns:
+    """ 
+    this regular expression patterns are used for javascript sourcecode tokenization
+    """
+    all_keywords               = """
+        abstract    boolean      break       byte      
+        case        catch        char        class     
+        const       continue     default     delete    
+        do          double       else        extends   
+        final       finally      float       for       
+        function    goto         if          implements
+        import      in           instanceof  int       
+        interface   long         native      new       
+        package     private      protected   public    
+        return      short        static      super     
+        switch      synchronized this        throw    
+        throws      transient    try         typeof    
+        var         void         volatile    while     
+        with
+    """
+    all_keywords_string       =  '|'.join(all_keywords.split()) 
+    # add pipe symboul between words for embededding in to regular expression
+    
+    SINGL_COMMENT :str        = r"//([^\r\n]*)"
+    MULTI_COMMENT : str       = r"/\*[\s\S]*\*/"
+    
+    FLOATING_POINT : str      = r"\d+\.\d+"
+    HEX_LITERAL : str         = r"0(x|X)[0-9a-fA-F]+"
+    DECIMEL :str              = r"0[0-7]+"
+    INTEGER : str             = r"\d+"
+    
+    KEYWORD : str             = f"(?:{all_keywords_string})(?![$_A-Za-z0-9])"                           
+    IDENTIFIER :str           = r"[A-Za-z_$]\w*"
+    DOT :str                  = r"\."
+    
+    UNARY  : str              = r"\+\+"
+    EQUALITY :str             = r"=="
+    ASSIGNMENT :str           = r"="
+    
+    MULTI  :str               = r"\*"
+    ADD  :str                 = r"\+"
+    SUB  :str                 = r"-"
+    DIV  : str                = r"\/"
+    
+    LEFT_SQUARE_BRACKET : str = r"\["
+    RIGHT_SQUARE_BRACKET :str = r"\]"
+    LEFT_PAREN : str          = r"\("
+    RIGHT_PAREN :str          = r"\)"
+    LEFT_CURLY: str           = r"\{"
+    RIGHT_CURLY : str         = r"\}"
+    SEMICOLON : str           = r";"
+    
+    LINETERM: str             = r"[\r\n\u2028\u2029]+" 
+    WHITESPACE : str          = r"[^\S\r\n\u2028\u2029]+" 
+    
+    def get_pattern_one_by_one(self):
+        for field in fields(self):
+            one_pattern = getattr(self, field.name)
+            yield one_pattern, field.name
+            
+    def __post_init__( self ): # compile regex onetime at startup 
+        for field in fields( self ): 
+            pattern = getattr ( self, field.name )
+            setattr( self, field.name, re.compile(pattern,re.VERBOSE) ) 
+         
+@dataclass
+class token:
+    "this is the object output to user when tokenizer runs"
+    type: str
+    value : str 
+    start : int
+    end : int
+
+
+class Error(Exception):
+    "all errors when tokenizing"
+
+class Invalid_token(Error):
+    "this is raised when none of the pattern matches at current position"
+    
+class tokenizer:
+     patterns = patterns()
+     
+     def token_found_callback(self,*args):
+         "users can override this callback to handle tokens theirself"
+         token_value = args[1]
+         if token_value in self.skip_tokens_list:
+             return
+         else:
+             return token (*args)
+     
+     def __init__(self,text,skip_token = None, regex = None ):
+         self.text_stream : str = text
+         self.skip_tokens_list : list = skip_token or []
+         self.pos : int = 0
+         self.regex : patterns = regex or self.patterns
+                 
+     def setpos(self,pos):
+         if pos > len(self.text_stream) or pos < 0:
+             raise Error("position must be in the range of text")
+         self.pos = pos
+         return pos
+         
+     
+     def match_current(self):
+         "to try to match pattern without modifying cursor position of tokenizer"
+         for one_pattern, name in self.regex.get_pattern_one_by_one():
+            found = one_pattern.match (self.text_stream, self.pos )
+            if found:
+                yield one_pattern,name, found
+  
+        
+     def get_next(self):
+         "main method that act as highlevel api of tokenizer"
+         try:
+             while self.pos < len(self.text_stream):
+                     
+                for pattern,name,matchobj in self.match_current():
+                   self.setpos(matchobj.end())
+                   processed_token = self.token_found_callback ( name,matchobj.group(),matchobj.start(),matchobj.end() )
+                   if processed_token:
+                       yield processed_token
+                   break
+     
+                else:
+                    raise Invalid_token(f"an invalid token found at {self.pos} = {self.text_stream[self.pos:self.pos+80]} ")
+                    
+         except Invalid_token:
+             raise
+             
+         except Exception as e:
+             raise Error("inside tokenizer there is an error") from e
+             
+         yield token("EOF","",self.pos, self.pos )
+
+
+
+
+if __name__ == "__main__":
+    
+    text = """
+            p++ 
+            x=0x55525256 * 0777 / y
+            var z = this.opera ;
+            if ( z ){
+                alert(1);
+            }
+    
+           //single line comment
+           /*
+           helo multiline comment
+           */
+           hi"""
+    
+    lexer = tokenizer ( text , skip_token = [" "] )
+    print ( "tokenizing.." )
+    for one_token in lexer.get_next():
+        print ( f"  {one_token.type,one_token.value}" )
+        
+    print ( "tokenizing ended" )
